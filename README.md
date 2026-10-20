@@ -1,6 +1,6 @@
-# 🪙 FinanzArg
+# FinanzArg
 
-> Aplicación web moderna y minimalista de control de gastos personales desarrollada como desafío final para APX.
+- Aplicación web moderna y minimalista de control de gastos personales desarrollada como desafío final para APX.
 
 🔗 **Link de la aplicación en producción:** [https://finanzarg-gamma.vercel.app/](https://finanzarg-gamma.vercel.app/)
 
