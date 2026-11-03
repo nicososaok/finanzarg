@@ -13,7 +13,10 @@ import {
   DollarSign,
   Calendar,
   FileText,
-  X
+  X,
+  Download,
+  Upload,
+  Target
 } from 'lucide-react';
 
 // Interfaces
@@ -24,6 +27,11 @@ export interface Transaction {
   category: string;
   description: string;
   date: string;
+}
+
+export interface BudgetLimit {
+  category: string;
+  limit: number;
 }
 
 const CATEGORIES = {
@@ -50,20 +58,23 @@ export default function App() {
     return localStorage.getItem('finanzarg_theme') === 'dark';
   });
 
+  // Iniciamos sin transacciones (todo en cero)
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     const saved = localStorage.getItem('finanzarg_transactions');
-    return saved ? JSON.parse(saved) : [
-      { id: '1', type: 'income', amount: 350000, category: 'Sueldo / Salario', description: 'Cobro de haberes', date: '2026-10-01' },
-      { id: '2', type: 'expense', amount: 45000, category: 'Comida', description: 'Supermercado semanal', date: '2026-10-05' },
-      { id: '3', type: 'expense', amount: 12000, category: 'Transporte', description: 'Carga SUBE y Nafta', date: '2026-10-10' },
-    ];
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  // Estado para Presupuestos
+  const [budgets, setBudgets] = useState<BudgetLimit[]>(() => {
+    const saved = localStorage.getItem('finanzarg_budgets');
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Form State
+  // Form State para Transacciones
   const [formData, setFormData] = useState({
     type: 'expense' as 'income' | 'expense',
     amount: '',
@@ -72,10 +83,18 @@ export default function App() {
     date: new Date().toISOString().split('T')[0]
   });
 
+  // Form State para Presupuestos
+  const [budgetCategory, setBudgetCategory] = useState(CATEGORIES.expense[0].name);
+  const [budgetLimitInput, setBudgetLimitInput] = useState('');
+
   // Persistencia
   useEffect(() => {
     localStorage.setItem('finanzarg_transactions', JSON.stringify(transactions));
   }, [transactions]);
+
+  useEffect(() => {
+    localStorage.setItem('finanzarg_budgets', JSON.stringify(budgets));
+  }, [budgets]);
 
   useEffect(() => {
     if (darkMode) {
@@ -106,7 +125,7 @@ export default function App() {
     return `${day}/${month}/${year.slice(2)}`;
   };
 
-  // Abrir Modal
+  // Abrir Modal Transacción
   const openModalForNew = () => {
     setEditingId(null);
     setFormData({
@@ -165,14 +184,89 @@ export default function App() {
     }
   };
 
-  // Filtrar
+  // Guardar Presupuesto
+  const handleSaveBudget = (e: React.FormEvent) => {
+    e.preventDefault();
+    const limitNum = Number(budgetLimitInput);
+    if (!budgetCategory || isNaN(limitNum) || limitNum <= 0) return;
+
+    setBudgets(prev => {
+      const existing = prev.findIndex(b => b.category === budgetCategory);
+      if (existing >= 0) {
+        const updated = [...prev];
+        updated[existing].limit = limitNum;
+        return updated;
+      }
+      return [...prev, { category: budgetCategory, limit: limitNum }];
+    });
+    setBudgetLimitInput('');
+  };
+
+  // Exportar Backup CSV
+  const handleExportCSV = () => {
+    if (transactions.length === 0) {
+      alert('No hay transacciones para exportar.');
+      return;
+    }
+    const headers = ['id', 'amount', 'type', 'category', 'description', 'date'];
+    const rows = transactions.map(t => [t.id, t.amount, t.type, `"${t.category}"`, `"${t.description}"`, t.date].join(','));
+    const csvContent = [headers.join(','), ...rows].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `finanzarg_backup_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Importar Backup CSV
+  const handleImportCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (!content) return;
+      const lines = content.trim().split('\n');
+      if (lines.length <= 1) return;
+
+      const imported: Transaction[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const parts = lines[i].split(',');
+        if (parts.length >= 6) {
+          imported.push({
+            id: parts[0].trim(),
+            amount: parseFloat(parts[1].trim()),
+            type: parts[2].trim() as 'income' | 'expense',
+            category: parts[3].trim().replace(/^"|"$/g, ''),
+            description: parts[4].trim().replace(/^"|"$/g, ''),
+            date: parts[5].trim()
+          });
+        }
+      }
+
+      if (imported.length > 0) {
+        setTransactions(imported);
+        alert(`¡Se importaron ${imported.length} transacciones con éxito!`);
+      } else {
+        alert('Formato de archivo inválido.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  // Filtrar Transacciones
   const filteredTransactions = transactions.filter(t => {
     if (filterType === 'income') return t.type === 'income';
     if (filterType === 'expense') return t.type === 'expense';
     return true;
   });
 
-  // Datos para el desglose de Gastos
+  // Gastos por Categoría para Torta y Presupuestos
   const expenseTransactions = transactions.filter(t => t.type === 'expense');
   const expensesByCategory = CATEGORIES.expense.map(cat => {
     const total = expenseTransactions
@@ -181,7 +275,13 @@ export default function App() {
     return { ...cat, total };
   }).filter(cat => cat.total > 0);
 
-  // Generar gradiente en grados (deg) para la torta
+  // Gastos totales por nombre de categoría (para presupuestos)
+  const expenseMap = expenseTransactions.reduce((acc, t) => {
+    acc[t.category] = (acc[t.category] || 0) + t.amount;
+    return acc;
+  }, {} as Record<string, number>);
+
+  // Gradiente Torta
   const getConicGradient = () => {
     if (totalExpense === 0 || expensesByCategory.length === 0) return 'transparent';
     let currentAngle = 0;
@@ -261,7 +361,6 @@ export default function App() {
             <h2 className="text-lg font-semibold">Historial de Transacciones</h2>
 
             <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-              {/* Filtros */}
               <div className={`p-1 rounded-xl border flex gap-1 ${darkMode ? 'bg-slate-900 border-slate-700' : 'bg-slate-100 border-slate-200'}`}>
                 <button
                   onClick={() => setFilterType('all')}
@@ -283,7 +382,6 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Botón Agregar */}
               <button
                 onClick={openModalForNew}
                 className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-medium transition shadow-sm ml-auto"
@@ -294,7 +392,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Lista de Transacciones */}
           {filteredTransactions.length === 0 ? (
             <div className="text-center py-10 text-slate-400">
               No hay movimientos registrados.
@@ -328,7 +425,7 @@ export default function App() {
                       <button
                         onClick={() => openModalForEdit(t)}
                         className="p-1.5 text-slate-400 hover:text-emerald-500 rounded-lg hover:bg-emerald-500/10 transition"
-                        title="Editar monto / transacción"
+                        title="Editar"
                       >
                         <Edit2 className="w-4 h-4" />
                       </button>
@@ -347,7 +444,7 @@ export default function App() {
           )}
         </div>
 
-        {/* Sección Torta de Gastos por Categoría (DEBAJO) */}
+        {/* Sección Torta de Gastos por Categoría */}
         <div className={`p-6 rounded-2xl border shadow-sm ${darkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-slate-200'}`}>
           <div className="flex items-center gap-2 mb-6">
             <PieIcon className="w-5 h-5 text-emerald-500" />
@@ -358,7 +455,6 @@ export default function App() {
             <p className="text-center py-6 text-slate-400 text-sm">No hay egresos registrados para mostrar el desglose.</p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-              {/* Gráfico Torta Visual */}
               <div className="flex justify-center items-center relative py-4">
                 <div
                   className="w-48 h-48 rounded-full shadow-inner flex items-center justify-center"
@@ -371,7 +467,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Leyenda de Categorías */}
               <div className="space-y-3">
                 {expensesByCategory.map(cat => {
                   const percentage = ((cat.total / totalExpense) * 100).toFixed(1);
@@ -393,6 +488,90 @@ export default function App() {
           )}
         </div>
 
+        {/* Sección Presupuestos por Categoría */}
+        <div className={`p-6 rounded-2xl border shadow-sm ${darkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-slate-200'}`}>
+          <div className="flex items-center gap-2 mb-6">
+            <Target className="w-5 h-5 text-emerald-500" />
+            <h2 className="text-lg font-semibold">Presupuestos por Categoría</h2>
+          </div>
+
+          <form onSubmit={handleSaveBudget} className="flex flex-col sm:flex-row gap-3 mb-6">
+            <select
+              value={budgetCategory}
+              onChange={e => setBudgetCategory(e.target.value)}
+              className={`p-2.5 rounded-xl border text-sm ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-slate-50 border-slate-200 text-slate-800'}`}
+            >
+              {CATEGORIES.expense.map(c => (
+                <option key={c.id} value={c.name}>{c.name}</option>
+              ))}
+            </select>
+            <input
+              type="number"
+              placeholder="Límite máximo ($)"
+              value={budgetLimitInput}
+              onChange={e => setBudgetLimitInput(e.target.value)}
+              min="1"
+              className={`p-2.5 rounded-xl border text-sm flex-1 ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-slate-50 border-slate-200 text-slate-800'}`}
+            />
+            <button
+              type="submit"
+              className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-sm font-semibold transition shadow-sm"
+            >
+              Definir Límite
+            </button>
+          </form>
+
+          <div className="space-y-4">
+            {budgets.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center py-2">No hay presupuestos definidos todavía.</p>
+            ) : (
+              budgets.map(b => {
+                const spent = expenseMap[b.category] || 0;
+                const progress = Math.min(Math.round((spent / b.limit) * 100), 100);
+                const isExceeded = spent > b.limit;
+
+                return (
+                  <div key={b.category} className={`p-4 rounded-xl border ${darkMode ? 'border-slate-700 bg-slate-900/40' : 'border-slate-100 bg-slate-50/50'}`}>
+                    <div className="flex justify-between text-sm mb-2">
+                      <span className="font-medium">{b.category}</span>
+                      <span className="text-xs text-slate-400">${spent.toLocaleString('es-AR')} / ${b.limit.toLocaleString('es-AR')} ({progress}%)</span>
+                    </div>
+                    <div className={`w-full rounded-full h-2.5 ${darkMode ? 'bg-slate-700' : 'bg-slate-200'}`}>
+                      <div
+                        className={`h-2.5 rounded-full ${isExceeded ? 'bg-rose-500' : progress > 80 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                        style={{ width: `${progress}%` }}
+                      />
+                    </div>
+                    {isExceeded && (
+                      <span className="text-xs text-rose-500 font-medium mt-1 inline-block">¡Has superado el presupuesto de esta categoría!</span>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* Barra de Herramientas de Respaldo / Backup */}
+        <div className={`p-4 rounded-2xl border shadow-sm flex flex-wrap items-center justify-between gap-4 ${darkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-white border-slate-200'}`}>
+          <div>
+            <h3 className="text-sm font-semibold">Copia de Seguridad (Backup)</h3>
+            <p className="text-xs text-slate-400">Exportá o importá tus transacciones en formato CSV.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportCSV}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-medium transition shadow-sm"
+            >
+              <Download className="w-4 h-4" /> Exportar CSV
+            </button>
+            <label className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-600 hover:bg-slate-700 text-white rounded-xl text-xs font-medium transition shadow-sm cursor-pointer">
+              <Upload className="w-4 h-4" /> Importar CSV
+              <input type="file" accept=".csv" onChange={handleImportCSV} className="hidden" />
+            </label>
+          </div>
+        </div>
+
       </main>
 
       {/* Modal para Agregar / Editar */}
@@ -410,7 +589,6 @@ export default function App() {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Tipo */}
               <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 dark:bg-slate-900 rounded-xl">
                 <button
                   type="button"
@@ -440,7 +618,6 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Monto */}
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1">Monto ($)</label>
                 <div className="relative">
@@ -457,7 +634,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Categoría */}
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1">Categoría</label>
                 <div className="relative">
@@ -474,7 +650,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Fecha */}
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1">Fecha</label>
                 <div className="relative">
@@ -489,7 +664,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Descripción */}
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1">Descripción / Nota</label>
                 <div className="relative">
@@ -504,7 +678,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Botón Guardar */}
               <button
                 type="submit"
                 className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-sm font-semibold transition shadow-md mt-2"
